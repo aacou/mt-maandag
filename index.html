@@ -108,7 +108,7 @@ select { font: inherit; color: var(--fg); background: var(--bg); border: 1px sol
   </header>
   <div class="closed" id="closedBanner" hidden><b>Inschrijvingen afgesloten.</b> Antwoorden kunnen niet meer gewijzigd worden tot de volgende ronde.</div>
   <div class="tally" id="tally" aria-live="polite"></div>
-  <p class="legend"><b>Groen</b>: je hebt een plaats. <b>Oranje</b>: je komt graag, maar staat op de wachtlijst. <b>Rood</b>: je komt niet. <b>Paars (2/3)</b>: je komt, maar vertrekt vroeger; dat wordt pas bij het afsluiten toegekend of niet. Grijs: nog niet geantwoord.</p>
+  <p class="legend"><b>Groen</b>: je hebt een plaats. <b>Oranje</b>: je komt graag, maar staat op de wachtlijst. <b>Rood</b>: je komt niet.<span id="legendPart"> <b>Paars (2/3)</b>: je komt, maar vertrekt vroeger; dat wordt pas bij het afsluiten toegekend of niet.</span> Grijs: nog niet geantwoord.</p>
   <div class="panel" id="mePanel" hidden>
     <div id="chooseMe">
       <label for="meSelect">Wie ben jij? Kies je naam om te kunnen antwoorden.</label>
@@ -131,6 +131,7 @@ select { font: inherit; color: var(--fg); background: var(--bg); border: 1px sol
       <button type="button" class="btn ghost" id="dateBtn">Enkel datum aanpassen</button>
       <button type="button" class="btn ghost" id="lockBtn">Inschrijvingen afsluiten</button>
       <button type="button" class="btn wa" id="remindBtn">Reminder sturen</button>
+      <button type="button" class="btn wa" id="listBtn">Lijst versturen</button>
       <button type="button" class="link" id="adminLogout">Afmelden als beheerder</button>
     </div>
     <div id="resetConfirm" class="confirm" hidden>
@@ -162,6 +163,8 @@ select { font: inherit; color: var(--fg); background: var(--bg); border: 1px sol
 </div>
 
 <script>
+// Zet op false om de keuze 2/3 (vroeger vertrekken) uit te schakelen.
+const TWEE_DERDE = false;
 let PLACES = 16, people = [], busy = false, me = null;
 // Opslag per app (map op GitHub), zodat meerdere groepen op hetzelfde account elkaar niet storen
 const KEY_ME = 'plaatsen-me:' + location.pathname;
@@ -208,6 +211,7 @@ function computeOrder(people) {
 }
 
 function render() {
+  $('legendPart').hidden = !TWEE_DERDE;
   const rows = computeOrder(people);
   const list = $('list');
   list.textContent = '';
@@ -226,9 +230,11 @@ function render() {
     li.querySelector('.nr').textContent = idx + 1;
     li.querySelector('.name').textContent = r.p.name;
     li.querySelector('.state').textContent = r.state;
+    if (!TWEE_DERDE) li.querySelector('.mid').remove();
     if (id !== me || gesloten) li.querySelector('.btns').hidden = true;
     [['.yes', 'ja'], ['.mid', 'deels'], ['.nay', 'nee']].forEach(([sel, val]) => {
       const b = li.querySelector(sel);
+      if (!b) return;
       b.classList.toggle('on', r.p.s === val);
       b.setAttribute('aria-pressed', r.p.s === val);
       b.disabled = busy;
@@ -253,7 +259,7 @@ function render() {
   $('chooseMe').hidden = known;
   $('isMe').hidden = !known;
   $('meName').textContent = known ? me : '';
-  $('isMe').querySelector('span').lastChild.textContent = gesloten ? '. De inschrijvingen zijn afgesloten.' : '. Antwoord met ✓, 2/3 of ✕ op je eigen rij.';
+  $('isMe').querySelector('span').lastChild.textContent = gesloten ? '. De inschrijvingen zijn afgesloten.' : (TWEE_DERDE ? '. Antwoord met ✓, 2/3 of ✕ op je eigen rij.' : '. Antwoord met ✓ of ✕ op je eigen rij.');
 }
 
 $('changeMe').addEventListener('click', () => {
@@ -279,6 +285,7 @@ function apply(state) {
   $('when').hidden = !datum;
   $('whenDate').textContent = fmtDate(datum);
   $('err').hidden = true;
+  if (typeof adminCode !== 'undefined' && adminCode) maakLijstAfbeelding();
   $('foot').textContent = 'Bijgewerkt om ' + new Date().toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' });
   render();
 }
@@ -341,7 +348,7 @@ function laadReminder() {
     .catch(() => {});
 }
 function showAdmin() {
-  if (adminCode) laadReminder();
+  if (adminCode) { laadReminder(); maakLijstAfbeelding(); }
   $('admin').hidden = !adminCode;
   $('adminLogin').hidden = true;
   $('adminOpen').hidden = !!adminCode;
@@ -402,6 +409,85 @@ $('lockBtn').onclick = () => {
     })
     .catch(e => { $('lockBtn').disabled = false; showError(e); });
 };
+/* ---------- Lijst als afbeelding ---------- */
+let lijstFile = null;
+const lijstLogo = new Image();
+lijstLogo.src = 'icon-192.png';
+
+function maakLijstAfbeelding() {
+  const spelers = computeOrder(people).filter(r => r.cls === 'ok' || r.cls === 'partok');
+  const F = '"Figtree", "Segoe UI", Roboto, Arial, sans-serif';
+  const W = 1080, PAD = 60, HEAD = 230, ROW = 84, GAP = 10, FOOT = 110;
+  const H = HEAD + Math.max(1, spelers.length) * (ROW + GAP) + FOOT;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  const rond = (rx, ry, rw, rh, r) => { x.beginPath(); x.moveTo(rx + r, ry); x.arcTo(rx + rw, ry, rx + rw, ry + rh, r); x.arcTo(rx + rw, ry + rh, rx, ry + rh, r); x.arcTo(rx, ry + rh, rx, ry, r); x.arcTo(rx, ry, rx + rw, ry, r); x.closePath(); };
+  const kort = (t, max) => { if (x.measureText(t).width <= max) return t; while (t.length > 1 && x.measureText(t + '…').width > max) t = t.slice(0, -1); return t + '…'; };
+
+  // Achtergrond en kop
+  x.fillStyle = '#f3f5f8'; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#184a3a'; x.fillRect(0, 0, W, HEAD - 30);
+  let tx = PAD;
+  if (lijstLogo.complete && lijstLogo.naturalWidth) { x.drawImage(lijstLogo, PAD, 40, 120, 120); tx = PAD + 150; }
+  x.fillStyle = '#ffffff'; x.font = '800 64px ' + F; x.textBaseline = 'alphabetic';
+  x.fillText(kort(document.title, W - tx - PAD), tx, 102);
+  x.fillStyle = '#d6e834'; x.font = '600 38px ' + F;
+  x.fillText(kort(datum ? fmtDate(datum) : 'Spelerslijst', W - tx - PAD), tx, 152);
+
+  // Rijen
+  let y = HEAD;
+  if (!spelers.length) {
+    x.fillStyle = '#5d6779'; x.font = '500 36px ' + F;
+    x.fillText('Nog niemand heeft een plaats.', PAD, y + 52);
+    y += ROW + GAP;
+  }
+  spelers.forEach((r, i) => {
+    const deel = r.cls === 'partok';
+    rond(PAD, y, W - 2 * PAD, ROW, 14);
+    x.fillStyle = deel ? '#f2fbf5' : '#e3f4ea'; x.fill();
+    x.fillStyle = deel ? '#3f9e66' : '#1d8a4e'; x.fillRect(PAD, y, 10, ROW);
+    x.font = '800 36px ' + F; x.textAlign = 'right';
+    x.fillText(String(i + 1), PAD + 80, y + 55);
+    x.textAlign = 'left';
+    let labelW = 0;
+    if (deel) {
+      x.font = '600 26px ' + F; const lab = '2/3 · vertrekt vroeger';
+      labelW = x.measureText(lab).width + 30;
+      x.fillText(lab, W - PAD - labelW + 10, y + 53);
+    }
+    x.fillStyle = '#172033'; x.font = '600 38px ' + F;
+    x.fillText(kort(r.p.name, W - 2 * PAD - 120 - labelW), PAD + 110, y + 55);
+    y += ROW + GAP;
+  });
+
+  // Voet
+  const deels = spelers.filter(r => r.cls === 'partok').length;
+  x.fillStyle = '#5d6779'; x.font = '500 30px ' + F;
+  x.fillText(spelers.length + (spelers.length === 1 ? ' speler' : ' spelers') + (deels ? ' (waarvan ' + deels + ' × 2/3)' : '') +
+    (gesloten ? ' · inschrijvingen afgesloten' : ' · stand van ' + new Date().toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })),
+    PAD, y + 50);
+
+  c.toBlob(b => { if (b) lijstFile = new File([b], 'spelerslijst.png', { type: 'image/png' }); }, 'image/png');
+}
+
+$('listBtn').onclick = async () => {
+  $('resetDone').hidden = true;
+  if (lijstFile && navigator.canShare && navigator.canShare({ files: [lijstFile] })) {
+    try {
+      await navigator.share({ files: [lijstFile] });
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+  }
+  $('resetDoneText').textContent = lijstFile
+    ? 'Dit toestel kan geen afbeelding delen. Gebruik de knop op je smartphone.'
+    : 'De lijst wordt nog klaargemaakt. Probeer het over een paar seconden opnieuw.';
+  if (!lijstFile) maakLijstAfbeelding();
+  $('waBtn').hidden = true; $('resetDone').hidden = false;
+};
+
 $('remindBtn').onclick = async () => {
   $('resetDone').hidden = true;
   // Enkel de afbeelding via het deelmenu van de telefoon (kies daar WhatsApp en de groep)
