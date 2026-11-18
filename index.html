@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MT maandag</title>
+<title>MT zaterdag</title>
 <meta name="theme-color" content="#184a3a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="MT maandag">
+<meta name="apple-mobile-web-app-title" content="MT zaterdag">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <script src="config.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap">
@@ -96,7 +96,7 @@ select { font: inherit; color: var(--fg); background: var(--bg); border: 1px sol
 <body>
 <div class="wrap">
   <header>
-    <div class="brand"><img src="icon-192.png" alt="" width="44" height="44"><h1>MT maandag</h1></div>
+    <div class="brand"><img src="icon-192.png" alt="" width="44" height="44"><h1>MT zaterdag</h1></div>
     <p class="when" id="when" hidden>Volgende ontmoeting: <b id="whenDate"></b></p>
     <p class="sub" id="sub">Duid aan of je komt; de lijst schuift vanzelf door.</p>
   </header>
@@ -383,8 +383,11 @@ let lijstFile = null;
 const lijstLogo = new Image();
 lijstLogo.src = 'icon-192.png';
 
-function maakLijstAfbeelding() {
+function maakLijstAfbeelding(alsGesloten, meteen) {
+  const dicht = alsGesloten || gesloten;
+  const vorig = gesloten; gesloten = dicht;
   const spelers = computeOrder(people).filter(r => r.cls === 'ok');
+  gesloten = vorig;
   const F = '"Figtree", "Segoe UI", Roboto, Arial, sans-serif';
   const W = 1080, PAD = 60, HEAD = 230, ROW = 84, GAP = 10, FOOT = 110;
   const H = HEAD + Math.max(1, spelers.length) * (ROW + GAP) + FOOT;
@@ -426,27 +429,43 @@ function maakLijstAfbeelding() {
   // Voet
   x.fillStyle = '#5d6779'; x.font = '500 30px ' + F;
   x.fillText(spelers.length + (spelers.length === 1 ? ' speler' : ' spelers') +
-    (gesloten ? ' · inschrijvingen afgesloten' : ' · stand van ' + new Date().toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })),
+    (dicht ? ' · inschrijvingen afgesloten' : ' · stand van ' + new Date().toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })),
     PAD, y + 50);
 
+  if (meteen) {
+    // Zonder wachten, zodat het delen direct na de tik kan starten
+    const bin = atob(c.toDataURL('image/png').split(',')[1]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], 'spelerslijst.png', { type: 'image/png' });
+  }
   c.toBlob(b => { if (b) lijstFile = new File([b], 'spelerslijst.png', { type: 'image/png' }); }, 'image/png');
 }
 
 $('listBtn').onclick = async () => {
-  $('resetDone').hidden = true;
-  if (lijstFile && navigator.canShare && navigator.canShare({ files: [lijstFile] })) {
-    try {
-      await navigator.share({ files: [lijstFile] });
-      return;
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-    }
+  $('resetDone').hidden = true; $('waBtn').hidden = true;
+  const toon = t => { $('resetDoneText').textContent = t; $('resetDone').hidden = false; };
+  // De lijst zoals ze na het afsluiten is (wie niet antwoordde, telt niet mee)
+  const bestand = maakLijstAfbeelding(true, true);
+  // Inschrijvingen afsluiten (gebeurt tegelijk met het delen)
+  let afsluiten = Promise.resolve(true);
+  if (!gesloten) {
+    $('listBtn').disabled = true;
+    afsluiten = api({ action: 'sluit', code: adminCode })
+      .then(state => { apply(state); return true; })
+      .catch(e => { showError(e); return false; })
+      .finally(() => { $('listBtn').disabled = false; });
   }
-  $('resetDoneText').textContent = lijstFile
-    ? 'Dit toestel kan geen afbeelding delen. Gebruik de knop op je smartphone.'
-    : 'De lijst wordt nog klaargemaakt. Probeer het over een paar seconden opnieuw.';
-  if (!lijstFile) maakLijstAfbeelding();
-  $('waBtn').hidden = true; $('resetDone').hidden = false;
+  let gedeeld = false, kanDelen = !!(navigator.canShare && navigator.canShare({ files: [bestand] }));
+  if (kanDelen) {
+    try { await navigator.share({ files: [bestand] }); gedeeld = true; }
+    catch (e) { if (!(e && e.name === 'AbortError')) kanDelen = false; }
+  }
+  const dicht = await afsluiten;
+  if (!dicht) return;
+  if (gedeeld) toon('De inschrijvingen zijn afgesloten en de lijst is gedeeld.');
+  else if (kanDelen) toon('De inschrijvingen zijn afgesloten. Het delen werd geannuleerd: tik opnieuw op Lijst versturen om de lijst te delen.');
+  else toon('De inschrijvingen zijn afgesloten. Dit toestel kan geen afbeelding delen: gebruik de knop op je smartphone.');
 };
 
 $('remindBtn').onclick = async () => {
